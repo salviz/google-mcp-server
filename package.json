@@ -1,7 +1,7 @@
 {
-  "name": "google-mcp-server",
-  "version": "1.0.0",
-  "description": "Custom Google MCP server - Drive (upload/download/export), Calendar, Contacts, Tasks, Sheets (with batchUpdate), Docs, Slides",
+  "name": "@salviz/google-mcp-server",
+  "version": "2.0.0",
+  "description": "MCP server with 73 tools for Google Workspace — Drive, Docs, Slides, Sheets, Calendar, Contacts, and Tasks",
   "main": "index.js",
   "type": "module",
   "bin": {
@@ -9,6 +9,27 @@
   },
   "scripts": {
     "start": "node index.js"
+  },
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "google-workspace",
+    "google-drive",
+    "google-docs",
+    "google-slides",
+    "google-sheets",
+    "google-calendar",
+    "model-context-protocol"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/salviz/google-mcp-server.git"
+  },
+  "author": "salviz",
+  "license": "MIT",
+  "homepage": "https://github.com/salviz/google-mcp-server",
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
