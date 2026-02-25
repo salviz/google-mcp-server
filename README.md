@@ -1,48 +1,51 @@
 # Google Workspace MCP Server
 
-A custom [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) that provides **50 tools** for interacting with Google Workspace services: **Drive**, **Calendar**, **Contacts/People**, **Tasks**, and **Sheets**.
+A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server providing **73 tools** for Google Workspace: **Drive**, **Docs**, **Slides**, **Sheets**, **Calendar**, **Contacts**, and **Tasks**.
 
-Built with the official `@modelcontextprotocol/sdk`, `googleapis`, and `zod` for schema validation.
-
----
+Built with [`googleapis`](https://www.npmjs.com/package/googleapis) and [`@modelcontextprotocol/sdk`](https://www.npmjs.com/package/@modelcontextprotocol/sdk).
 
 ## Features
 
-| Service | Tools | Capabilities |
-|---------|-------|-------------|
-| **Google Drive** | 16 | Search, read, list, file info, create folders/files, update, delete, trash/untrash, copy, move, share, manage permissions, storage quota |
-| **Google Calendar** | 13 | List/create/update/delete/get events, quick add, move events, recurring instances, free/busy, create/delete/clear calendars |
-| **Google Contacts** | 6 | List, get, create, update, delete contacts, list contact groups |
-| **Google Tasks** | 9 | List/create/complete/update/delete tasks, create/delete task lists, move/reorder tasks |
-| **Google Sheets** | 6 | Read, write, create spreadsheets, append rows, clear ranges, get spreadsheet metadata |
-
-**Total: 50 tools**
-
----
+| Service | Tools | Highlights |
+|---------|-------|------------|
+| **Drive** | 23 | Search, CRUD, upload/download binary files, export, trash, share, permissions, revisions, comments |
+| **Docs** | 7 | Create, read, insert text/tables/images, batch update, find & replace |
+| **Slides** | 6 | Create, read, add slides, insert text, replace text, batch update |
+| **Sheets** | 7 | Read, write, create, append, clear, batch update, get info |
+| **Calendar** | 15 | Events CRUD, search, quick add, recurring instances, free/busy, calendar management, all-day events |
+| **Contacts** | 6 | List, get, create, update, delete, contact groups |
+| **Tasks** | 9 | Tasks and task lists CRUD, complete, move/reorder |
 
 ## Prerequisites
 
-- **Node.js** 18 or later
-- A **Google Cloud Platform** project with OAuth 2.0 credentials (Desktop application type)
-- The following **Google APIs** enabled in your project:
+- **Node.js 18+**
+- A **Google Cloud Platform** project with OAuth 2.0 credentials (Desktop app type)
+- The following **APIs enabled**:
   - Google Drive API
+  - Google Docs API
+  - Google Slides API
+  - Google Sheets API
   - Google Calendar API
   - People API (Contacts)
   - Tasks API
-  - Google Sheets API
-- A **token file** containing a valid `refresh_token`
 
----
+## Quick Install
 
-## Quick Install (Claude Code)
+```bash
+git clone https://github.com/salviz/google-mcp-server.git
+cd google-mcp-server
+npm install
+```
 
-### One-liner
+### Register with Claude Code
+
+CLI:
 
 ```bash
 claude mcp add google-workspace -- node /path/to/google-mcp-server/index.js
 ```
 
-### Full configuration (claude_desktop_config.json or .mcp.json)
+Or add to your MCP config (`~/.claude/claude_desktop_config.json` or `.mcp.json`):
 
 ```json
 {
@@ -61,65 +64,157 @@ claude mcp add google-workspace -- node /path/to/google-mcp-server/index.js
 }
 ```
 
-Replace `/path/to/google-mcp-server` with the actual directory where this server is installed.
-
----
-
 ## Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `GOOGLE_CLIENT_ID` | Yes | OAuth 2.0 client ID from Google Cloud Console |
-| `GOOGLE_CLIENT_SECRET` | Yes | OAuth 2.0 client secret from Google Cloud Console |
-| `GOOGLE_TOKEN_PATH` | No | Path to the token JSON file. Defaults to `~/.google-mcp/credentials.json` |
-
----
+| `GOOGLE_CLIENT_ID` | Yes | OAuth 2.0 client ID |
+| `GOOGLE_CLIENT_SECRET` | Yes | OAuth 2.0 client secret |
+| `GOOGLE_TOKEN_PATH` | No | Path to token JSON file (default: `~/.google-mcp/credentials.json`) |
 
 ## Token File Format
 
-The token file must be valid JSON with the following structure:
-
 ```json
 {
-  "access_token": "ya29.a0AfH6SM...",
-  "refresh_token": "1//0eXx...",
+  "access_token": "ya29...",
+  "refresh_token": "1//...",
   "token_type": "Bearer",
   "expiry_date": 1700000000000
 }
 ```
 
-The server automatically refreshes expired access tokens using the `refresh_token` and writes updated tokens back to the file.
+The server automatically refreshes expired tokens and persists updates to disk.
 
----
+## Tools (68)
+
+### Google Drive (23)
+
+| Tool | Description |
+|------|-------------|
+| `drive_search` | Search files using Drive query syntax |
+| `drive_read` | Read file content (detects binary, suggests download) |
+| `drive_list` | List files in a folder |
+| `drive_file_info` | Get detailed file metadata |
+| `drive_create_folder` | Create a new folder |
+| `drive_create_file` | Create a new text file |
+| `drive_update_file` | Update file name, content, or description |
+| `drive_delete` | Permanently delete a file |
+| `drive_trash` | Move a file to trash |
+| `drive_untrash` | Restore a file from trash |
+| `drive_copy` | Copy a file |
+| `drive_move` | Move a file to a different folder |
+| `drive_share` | Share a file (user, group, domain, or anyone) |
+| `drive_list_permissions` | List sharing permissions |
+| `drive_remove_permission` | Remove a sharing permission |
+| `drive_about` | Get storage quota and user info |
+| `drive_upload_file` | Upload a binary file from local filesystem |
+| `drive_download_file` | Download a file to local filesystem |
+| `drive_get_comments` | List comments on a file |
+| `drive_add_comment` | Add a comment to a file |
+| `drive_export_file` | Export Google Workspace files (PDF, DOCX, CSV, etc.) |
+| `drive_get_revisions` | List file revision history |
+| `drive_empty_trash` | Permanently empty all trash |
+
+### Google Docs (7)
+
+| Tool | Description |
+|------|-------------|
+| `docs_create` | Create a new document with optional content and folder |
+| `docs_read` | Read full document content as plain text |
+| `docs_insert_text` | Insert text at a position with optional segment targeting |
+| `docs_batch_update` | Apply batch update requests (formatting, structure, etc.) |
+| `docs_insert_table` | Insert a table with specified rows and columns |
+| `docs_insert_image` | Insert an inline image from a URL with optional dimensions |
+| `docs_find_replace` | Find and replace text across the document |
+
+### Google Slides (6)
+
+| Tool | Description |
+|------|-------------|
+| `slides_create` | Create a new presentation with optional title slide |
+| `slides_read` | Read all slide content as structured text |
+| `slides_add_slide` | Add a new slide with optional layout and position |
+| `slides_insert_text` | Insert text into a shape or text box by object ID |
+| `slides_replace_all_text` | Find and replace text across all slides |
+| `slides_batch_update` | Apply batch update requests (create shapes, format, etc.) |
+
+### Google Sheets (7)
+
+| Tool | Description |
+|------|-------------|
+| `sheets_read` | Read data from a spreadsheet range |
+| `sheets_write` | Write data to a range |
+| `sheets_create` | Create a new spreadsheet |
+| `sheets_append` | Append rows after existing data |
+| `sheets_clear` | Clear values from a range |
+| `sheets_batch_update` | Structural operations (add sheets, merge cells, charts, borders) |
+| `sheets_get_info` | Get spreadsheet metadata (title, sheets, dimensions) |
+
+### Google Calendar (15)
+
+| Tool | Description |
+|------|-------------|
+| `calendar_list_events` | List upcoming events with optional time range |
+| `calendar_search_events` | Search events by text (summary, description, location) |
+| `calendar_create_event` | Create an event (supports all-day with date-only format) |
+| `calendar_update_event` | Update an existing event |
+| `calendar_delete_event` | Delete an event |
+| `calendar_list_calendars` | List all accessible calendars |
+| `calendar_quick_add` | Create event from natural language |
+| `calendar_get_event` | Get detailed event info |
+| `calendar_move_event` | Move event between calendars |
+| `calendar_recurring_instances` | List instances of a recurring event |
+| `calendar_freebusy` | Check free/busy time for calendars |
+| `calendar_create_calendar` | Create a new calendar |
+| `calendar_update_calendar` | Update calendar name, description, or timezone |
+| `calendar_delete_calendar` | Delete a calendar (not primary) |
+| `calendar_clear` | Clear all events from a calendar |
+
+### Google Contacts (6)
+
+| Tool | Description |
+|------|-------------|
+| `contacts_list` | List contacts or search by query |
+| `contacts_get` | Get a specific contact by resource name |
+| `contacts_create` | Create a new contact |
+| `contacts_update` | Update an existing contact |
+| `contacts_delete` | Delete a contact |
+| `contacts_groups_list` | List contact groups (labels) |
+
+### Google Tasks (9)
+
+| Tool | Description |
+|------|-------------|
+| `tasks_list` | List all task lists |
+| `tasks_list_tasks` | List tasks in a task list |
+| `tasks_create` | Create a new task |
+| `tasks_complete` | Mark a task as completed |
+| `tasks_update` | Update task title, notes, due date, or status |
+| `tasks_delete` | Delete a task |
+| `tasks_create_list` | Create a new task list |
+| `tasks_delete_list` | Delete a task list |
+| `tasks_move` | Move or reorder a task (set parent or position) |
 
 ## Setup Guide
 
 ### 1. Create a Google Cloud Project
 
-- Go to the [Google Cloud Console](https://console.cloud.google.com/)
-- Create a new project or select an existing one
+Go to the [Google Cloud Console](https://console.cloud.google.com/) and create or select a project.
 
 ### 2. Enable APIs
 
-Enable the following APIs in **APIs & Services > Library**:
-
-- Google Drive API
-- Google Calendar API
-- People API
-- Tasks API
-- Google Sheets API
+In **APIs & Services > Library**, enable: Drive, Docs, Slides, Sheets, Calendar, People, and Tasks APIs.
 
 ### 3. Create OAuth 2.0 Credentials
 
 1. Navigate to **APIs & Services > Credentials**
 2. Click **Create Credentials > OAuth client ID**
-3. Select **Desktop app** as the application type
-4. Download the credentials JSON file
-5. Note the `client_id` and `client_secret`
+3. Select **Desktop app**
+4. Note the `client_id` and `client_secret`
 
-### 4. Obtain Initial Tokens
+### 4. Obtain Tokens
 
-Run an OAuth 2.0 authorization flow to get your initial `access_token` and `refresh_token`. You can use a tool like [Google's OAuth 2.0 Playground](https://developers.google.com/oauthplayground/) or write a small script using `googleapis`:
+Use [Google's OAuth Playground](https://developers.google.com/oauthplayground/) or a script:
 
 ```javascript
 import { google } from 'googleapis';
@@ -134,152 +229,55 @@ const url = oauth2Client.generateAuthUrl({
   access_type: 'offline',
   scope: [
     'https://www.googleapis.com/auth/drive',
+    'https://www.googleapis.com/auth/documents',
+    'https://www.googleapis.com/auth/presentations',
+    'https://www.googleapis.com/auth/spreadsheets',
     'https://www.googleapis.com/auth/calendar',
     'https://www.googleapis.com/auth/contacts',
     'https://www.googleapis.com/auth/tasks',
-    'https://www.googleapis.com/auth/spreadsheets',
   ],
 });
 
-console.log('Authorize this app by visiting:', url);
-// After authorization, exchange the code for tokens
+console.log('Authorize at:', url);
 ```
 
-### 5. Save the Token File
-
-Save the tokens to your chosen path (default: `~/.google-mcp/credentials.json`):
+### 5. Save Tokens
 
 ```bash
 mkdir -p ~/.google-mcp
-cat > ~/.google-mcp/credentials.json << 'EOF'
-{
-  "access_token": "ya29...",
-  "refresh_token": "1//...",
-  "token_type": "Bearer",
-  "expiry_date": 1700000000000
-}
-EOF
+# Save the token JSON to ~/.google-mcp/credentials.json
 ```
-
-### 6. Configure Claude Code
-
-Set the environment variables and add the MCP server to Claude Code as shown in the [Quick Install](#quick-install-claude-code) section.
-
----
-
-## All Tools Reference
-
-### Google Drive (16 tools)
-
-| # | Tool | Description |
-|---|------|-------------|
-| 1 | `drive_search` | Search for files in Google Drive using a query string |
-| 2 | `drive_read` | Read file content; exports Google Docs/Sheets/Slides as text/CSV |
-| 3 | `drive_list` | List files in a specific folder |
-| 4 | `drive_file_info` | Get detailed metadata about a file |
-| 5 | `drive_create_folder` | Create a new folder |
-| 6 | `drive_create_file` | Create a new text file |
-| 7 | `drive_update_file` | Update file metadata and/or content |
-| 8 | `drive_delete` | Permanently delete a file |
-| 9 | `drive_trash` | Move a file to trash |
-| 10 | `drive_untrash` | Restore a file from trash |
-| 11 | `drive_copy` | Copy a file |
-| 12 | `drive_move` | Move a file to a different folder |
-| 13 | `drive_share` | Share a file with a user, group, or domain |
-| 14 | `drive_list_permissions` | List sharing permissions on a file |
-| 15 | `drive_remove_permission` | Remove a sharing permission from a file |
-| 16 | `drive_about` | Get Drive storage quota and user info |
-
-### Google Calendar (13 tools)
-
-| # | Tool | Description |
-|---|------|-------------|
-| 1 | `calendar_list_events` | List upcoming events with optional time range filter |
-| 2 | `calendar_create_event` | Create a new event with start/end times |
-| 3 | `calendar_update_event` | Update an existing event (partial update) |
-| 4 | `calendar_delete_event` | Delete an event |
-| 5 | `calendar_list_calendars` | List all accessible calendars |
-| 6 | `calendar_quick_add` | Create an event from natural language (e.g., "Meeting tomorrow at 3pm") |
-| 7 | `calendar_get_event` | Get detailed information about a specific event |
-| 8 | `calendar_move_event` | Move an event from one calendar to another |
-| 9 | `calendar_recurring_instances` | List instances of a recurring event |
-| 10 | `calendar_freebusy` | Check free/busy time for one or more calendars |
-| 11 | `calendar_create_calendar` | Create a new calendar |
-| 12 | `calendar_delete_calendar` | Delete a calendar (cannot delete primary) |
-| 13 | `calendar_clear` | Clear all events from a calendar |
-
-### Google Contacts (6 tools)
-
-| # | Tool | Description |
-|---|------|-------------|
-| 1 | `contacts_list` | List contacts or search by query |
-| 2 | `contacts_get` | Get a specific contact by resource name |
-| 3 | `contacts_create` | Create a new contact |
-| 4 | `contacts_update` | Update an existing contact |
-| 5 | `contacts_delete` | Delete a contact |
-| 6 | `contacts_groups_list` | List contact groups (labels) |
-
-### Google Tasks (9 tools)
-
-| # | Tool | Description |
-|---|------|-------------|
-| 1 | `tasks_list` | List all task lists |
-| 2 | `tasks_list_tasks` | List tasks in a specific task list |
-| 3 | `tasks_create` | Create a new task |
-| 4 | `tasks_complete` | Mark a task as completed |
-| 5 | `tasks_update` | Update a task (title, notes, due date, status) |
-| 6 | `tasks_delete` | Delete a task |
-| 7 | `tasks_create_list` | Create a new task list |
-| 8 | `tasks_delete_list` | Delete a task list |
-| 9 | `tasks_move` | Move or reorder a task (set parent or position) |
-
-### Google Sheets (6 tools)
-
-| # | Tool | Description |
-|---|------|-------------|
-| 1 | `sheets_read` | Read data from a spreadsheet range |
-| 2 | `sheets_write` | Write data to a spreadsheet range |
-| 3 | `sheets_create` | Create a new spreadsheet |
-| 4 | `sheets_append` | Append rows to a spreadsheet |
-| 5 | `sheets_clear` | Clear values from a range |
-| 6 | `sheets_get_info` | Get spreadsheet metadata (title, sheets, dimensions) |
-
----
-
-## Security
-
-- **No hardcoded credentials** -- all secrets are passed via environment variables
-- **Tokens stored locally** -- the token file is only read/written on the local filesystem and never transmitted except to Google's OAuth APIs
-- **OAuth client credentials** are passed via `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` environment variables, never embedded in source
-- **Automatic token refresh** -- expired access tokens are silently refreshed using the stored refresh token, and the updated token is persisted to disk
-- **Stdio transport only** -- the server communicates exclusively over stdin/stdout with no network listener
-
----
 
 ## Project Structure
 
 ```
 google-mcp-server/
-  index.js          # Server entry point, registers all tool modules
-  auth.js           # OAuth 2.0 client setup and token management
-  package.json      # Dependencies and metadata
+  index.js              # Server entry point, registers all tool modules
+  auth.js               # OAuth 2.0 client, token management
   tools/
-    drive.js        # 16 Google Drive tools
-    calendar.js     # 13 Google Calendar tools
-    extras.js       # 21 tools: Contacts (6), Tasks (9), Sheets (6)
+    drive.js            # 23 Google Drive tools
+    docs.js             # 7 Google Docs tools
+    slides.js           # 6 Google Slides tools
+    calendar.js         # 15 Google Calendar tools
+    extras.js           # 22 tools: Contacts (6), Tasks (9), Sheets (7)
+  package.json
 ```
 
----
+## Security
+
+- **No hardcoded credentials** -- all secrets via environment variables
+- **Tokens stored locally** -- never transmitted except to Google's OAuth APIs
+- **Automatic token refresh** -- expired tokens refreshed silently
+- **Stdio transport only** -- no network server exposed
+- **Token file parsing** wrapped in try-catch for resilience
 
 ## Dependencies
 
 | Package | Purpose |
 |---------|---------|
-| `@modelcontextprotocol/sdk` | MCP server framework and stdio transport |
-| `googleapis` | Official Google APIs client library |
+| `@modelcontextprotocol/sdk` | MCP server framework |
+| `googleapis` | Official Google APIs client |
 | `zod` | Schema validation for tool parameters |
-
----
 
 ## License
 
