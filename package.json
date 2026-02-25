@@ -1,7 +1,7 @@
 {
   "name": "google-mcp-server",
   "version": "1.0.0",
-  "description": "Custom Google MCP server for Claude Code - Drive, Calendar, Contacts, Tasks, Sheets",
+  "description": "Custom Google MCP server - Drive (upload/download/export), Calendar, Contacts, Tasks, Sheets (with batchUpdate), Docs, Slides",
   "main": "index.js",
   "type": "module",
   "bin": {

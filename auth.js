@@ -24,13 +24,17 @@ export function getAuth() {
   oauth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET);
 
   if (existsSync(TOKEN_PATH)) {
-    const tokens = JSON.parse(readFileSync(TOKEN_PATH, 'utf-8'));
-    oauth2Client.setCredentials({
-      access_token: tokens.access_token,
-      refresh_token: tokens.refresh_token,
-      token_type: tokens.token_type || 'Bearer',
-      expiry_date: tokens.expiry_date,
-    });
+    try {
+      const tokens = JSON.parse(readFileSync(TOKEN_PATH, 'utf-8'));
+      oauth2Client.setCredentials({
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        token_type: tokens.token_type || 'Bearer',
+        expiry_date: tokens.expiry_date,
+      });
+    } catch (e) {
+      process.stderr.write(`Warning: Could not parse token file: ${e.message}\n`);
+    }
   }
 
   oauth2Client.on('tokens', (newTokens) => {

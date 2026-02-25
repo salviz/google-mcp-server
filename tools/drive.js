@@ -2,6 +2,28 @@ import { getAuth } from '../auth.js';
 import { google } from 'googleapis';
 import { z } from 'zod';
 import { Readable } from 'stream';
+import { createReadStream, createWriteStream, statSync, existsSync } from 'fs';
+import { basename, extname } from 'path';
+import { pipeline } from 'stream/promises';
+
+const UPLOAD_MIME_MAP = {
+  '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg',
+  '.flac': 'audio/flac', '.aac': 'audio/aac', '.m4a': 'audio/mp4',
+  '.mp4': 'video/mp4', '.avi': 'video/x-msvideo', '.mov': 'video/quicktime',
+  '.mkv': 'video/x-matroska', '.webm': 'video/webm', '.wmv': 'video/x-ms-wmv',
+  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+  '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp',
+  '.svg': 'image/svg+xml', '.pdf': 'application/pdf',
+  '.txt': 'text/plain', '.csv': 'text/csv', '.json': 'application/json',
+  '.html': 'text/html', '.xml': 'application/xml',
+  '.zip': 'application/zip', '.gz': 'application/gzip',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xls': 'application/vnd.ms-excel',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.ppt': 'application/vnd.ms-powerpoint',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+};
 
 const GOOGLE_MIME_EXPORTS = {
   'application/vnd.google-apps.document': {
@@ -48,7 +70,7 @@ export function registerDriveTools(server) {
     'Search for files in Google Drive using a query string',
     {
       query: z.string().describe('Search query (Drive search syntax supported)'),
-      maxResults: z.number().optional().describe('Maximum number of results to return (default: 10)'),
+      maxResults: z.coerce.number().optional().describe('Maximum number of results to return (default: 10)'),
     },
     async ({ query, maxResults }) => {
       try {
@@ -107,7 +129,13 @@ export function registerDriveTools(server) {
           });
           content = typeof res.data === 'string' ? res.data : JSON.stringify(res.data, null, 2);
         } else {
-          // Regular file - download content
+          // Regular file - check if binary
+          const binaryPrefixes = ['image/', 'audio/', 'video/', 'application/zip', 'application/gzip', 'application/octet-stream'];
+          if (binaryPrefixes.some(p => mimeType.startsWith(p))) {
+            return success(
+              `File: ${meta.data.name} (${mimeType})\nThis is a binary file. Use drive_download_file to download it to a local path.`
+            );
+          }
           const res = await drive.files.get(
             { fileId, alt: 'media' },
             { responseType: 'text' }
@@ -129,7 +157,7 @@ export function registerDriveTools(server) {
     'List files in a specific Google Drive folder',
     {
       folderId: z.string().optional().describe("Folder ID to list (default: 'root')"),
-      maxResults: z.number().optional().describe('Maximum number of results to return (default: 20)'),
+      maxResults: z.coerce.number().optional().describe('Maximum number of results to return (default: 20)'),
     },
     async ({ folderId, maxResults }) => {
       try {
@@ -137,8 +165,9 @@ export function registerDriveTools(server) {
         const folder = folderId || 'root';
         const pageSize = maxResults || 20;
 
+        const safeFolder = folder.replace(/'/g, "\\'");
         const res = await drive.files.list({
-          q: `'${folder}' in parents and trashed = false`,
+          q: `'${safeFolder}' in parents and trashed = false`,
           pageSize,
           fields: 'files(id,name,mimeType,modifiedTime,size,webViewLink)',
           orderBy: 'folder,name',
@@ -576,6 +605,236 @@ export function registerDriveTools(server) {
           `Trash Usage: ${formatBytes(storageQuota?.usageInDriveTrash)}`,
         ];
         return success(lines.join('\n'));
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 17. drive_upload_file - Upload a local file to Google Drive
+  server.tool(
+    'drive_upload_file',
+    'Upload a local file (binary or text) to Google Drive. Supports any file type.',
+    {
+      localPath: z.string().describe('Absolute path to the local file to upload'),
+      name: z.string().optional().describe('Name for the file in Drive (defaults to local filename)'),
+      parentId: z.string().optional().describe('Parent folder ID (defaults to root)'),
+      mimeType: z.string().optional().describe('MIME type (auto-detected from extension if omitted)'),
+    },
+    async ({ localPath, name, parentId, mimeType }) => {
+      try {
+        if (!existsSync(localPath)) {
+          return error(new Error(`File not found: ${localPath}`));
+        }
+        const stats = statSync(localPath);
+        if (!stats.isFile()) {
+          return error(new Error(`Not a file: ${localPath}`));
+        }
+
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const fileName = name || basename(localPath);
+        const ext = extname(localPath).toLowerCase();
+        const resolvedMimeType = mimeType || UPLOAD_MIME_MAP[ext] || 'application/octet-stream';
+
+        const res = await drive.files.create({
+          requestBody: {
+            name: fileName,
+            parents: parentId ? [parentId] : undefined,
+          },
+          media: {
+            mimeType: resolvedMimeType,
+            body: createReadStream(localPath),
+          },
+          fields: 'id,name,mimeType,size,webViewLink',
+        });
+
+        const file = res.data;
+        return success(
+          `File uploaded successfully.\nName: ${file.name}\nID: ${file.id}\nType: ${file.mimeType}\nSize: ${file.size} bytes` +
+            (file.webViewLink ? `\nLink: ${file.webViewLink}` : '')
+        );
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 18. drive_download_file - Download a Drive file to local path
+  server.tool(
+    'drive_download_file',
+    'Download a file from Google Drive to a local path',
+    {
+      fileId: z.string().describe('The ID of the file to download'),
+      localPath: z.string().describe('Absolute local path to save the file to'),
+    },
+    async ({ fileId, localPath }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+
+        const meta = await drive.files.get({
+          fileId,
+          fields: 'id,name,mimeType,size',
+        });
+
+        const mimeType = meta.data.mimeType;
+        const exportConfig = GOOGLE_MIME_EXPORTS[mimeType];
+
+        if (exportConfig) {
+          const res = await drive.files.export(
+            { fileId, mimeType: exportConfig.mimeType },
+            { responseType: 'stream' }
+          );
+          await pipeline(res.data, createWriteStream(localPath));
+        } else {
+          const res = await drive.files.get(
+            { fileId, alt: 'media' },
+            { responseType: 'stream' }
+          );
+          await pipeline(res.data, createWriteStream(localPath));
+        }
+
+        return success(
+          `File downloaded successfully.\nName: ${meta.data.name}\nSaved to: ${localPath}`
+        );
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 19. drive_get_comments - List comments on a file
+  server.tool(
+    'drive_get_comments',
+    'List comments on a Google Drive file',
+    {
+      fileId: z.string().describe('The ID of the file'),
+      maxResults: z.coerce.number().optional().describe('Maximum comments to return (default: 20)'),
+    },
+    async ({ fileId, maxResults }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const res = await drive.comments.list({
+          fileId,
+          pageSize: maxResults || 20,
+          fields: 'comments(id,content,author(displayName,emailAddress),createdTime,resolved)',
+        });
+
+        const comments = res.data.comments || [];
+        if (comments.length === 0) {
+          return success('No comments found on this file.');
+        }
+
+        const lines = [`Found ${comments.length} comment(s):\n`];
+        for (const c of comments) {
+          lines.push(`- [${c.id}] ${c.author?.displayName || 'Unknown'}: ${c.content}`);
+          lines.push(`  Created: ${c.createdTime}${c.resolved ? ' (resolved)' : ''}`);
+        }
+        return success(lines.join('\n'));
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 20. drive_add_comment - Add a comment to a file
+  server.tool(
+    'drive_add_comment',
+    'Add a comment to a Google Drive file',
+    {
+      fileId: z.string().describe('The ID of the file'),
+      content: z.string().describe('Comment text'),
+    },
+    async ({ fileId, content }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const res = await drive.comments.create({
+          fileId,
+          fields: 'id,content,author(displayName),createdTime',
+          requestBody: { content },
+        });
+
+        const c = res.data;
+        return success(
+          `Comment added.\nID: ${c.id}\nBy: ${c.author?.displayName || 'You'}\nContent: ${c.content}\nCreated: ${c.createdTime}`
+        );
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 21. drive_export_file - Export Google Workspace file to different format
+  server.tool(
+    'drive_export_file',
+    'Export a Google Workspace file (Doc, Sheet, Slides) to a different format (PDF, DOCX, CSV, PPTX, etc.)',
+    {
+      fileId: z.string().describe('The ID of the Google Workspace file to export'),
+      mimeType: z.string().describe('Target MIME type: application/pdf, application/vnd.openxmlformats-officedocument.wordprocessingml.document, text/csv, application/vnd.openxmlformats-officedocument.presentationml.presentation, etc.'),
+      localPath: z.string().describe('Absolute local path to save the exported file'),
+    },
+    async ({ fileId, mimeType, localPath }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const res = await drive.files.export(
+          { fileId, mimeType },
+          { responseType: 'stream' }
+        );
+        await pipeline(res.data, createWriteStream(localPath));
+
+        const meta = await drive.files.get({ fileId, fields: 'name' });
+        return success(
+          `File exported successfully.\nSource: ${meta.data.name}\nFormat: ${mimeType}\nSaved to: ${localPath}`
+        );
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 22. drive_get_revisions - List revisions of a file
+  server.tool(
+    'drive_get_revisions',
+    'List revisions of a Google Drive file',
+    {
+      fileId: z.string().describe('The ID of the file'),
+      maxResults: z.coerce.number().optional().describe('Maximum revisions to return (default: 20)'),
+    },
+    async ({ fileId, maxResults }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const res = await drive.revisions.list({
+          fileId,
+          pageSize: maxResults || 20,
+          fields: 'revisions(id,modifiedTime,lastModifyingUser(displayName,emailAddress),size)',
+        });
+
+        const revisions = res.data.revisions || [];
+        if (revisions.length === 0) {
+          return success('No revisions found for this file.');
+        }
+
+        const lines = [`Found ${revisions.length} revision(s):\n`];
+        for (const r of revisions) {
+          const user = r.lastModifyingUser?.displayName || 'Unknown';
+          lines.push(`- [${r.id}] Modified: ${r.modifiedTime} by ${user}${r.size ? ` (${r.size} bytes)` : ''}`);
+        }
+        return success(lines.join('\n'));
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 23. drive_empty_trash - Permanently empty all trash
+  server.tool(
+    'drive_empty_trash',
+    'Permanently delete all files in Google Drive trash',
+    {},
+    async () => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        await drive.files.emptyTrash();
+        return success('Trash emptied successfully. All trashed files permanently deleted.');
       } catch (e) {
         return error(e);
       }

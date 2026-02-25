@@ -10,7 +10,7 @@ export function registerExtraTools(server) {
     'contacts_list',
     'List Google Contacts or search by query',
     {
-      maxResults: z.number().optional().describe('Max contacts to return (default 20)'),
+      maxResults: z.coerce.number().optional().describe('Max contacts to return (default 20)'),
       query: z.string().optional().describe('Search query to filter contacts'),
     },
     async ({ maxResults, query }) => {
@@ -581,6 +581,36 @@ export function registerExtraTools(server) {
 
         return {
           content: [{ type: 'text', text: JSON.stringify(res.data, null, 2) }]
+        };
+      } catch (e) {
+        return { content: [{ type: 'text', text: 'Error: ' + e.message }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    'sheets_batch_update',
+    'Apply batch update requests to a Google Spreadsheet (formatting, add/delete sheets, merge cells, charts, conditional formatting, etc.)',
+    {
+      spreadsheetId: z.string().describe('The spreadsheet ID'),
+      requests: z.string().describe('JSON string of an array of Sheets API request objects (e.g. addSheet, mergeCells, updateBorders, addChart, etc.)'),
+    },
+    async ({ spreadsheetId, requests }) => {
+      try {
+        const parsed = JSON.parse(requests);
+        if (!Array.isArray(parsed)) {
+          return { content: [{ type: 'text', text: 'Error: requests must be a JSON array' }], isError: true };
+        }
+
+        const auth = getAuth();
+        const sheets = google.sheets({ version: 'v4', auth });
+        const res = await sheets.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: { requests: parsed },
+        });
+
+        return {
+          content: [{ type: 'text', text: `Batch update applied. ${res.data.replies?.length || 0} operation(s) completed.\n${JSON.stringify(res.data.replies || [], null, 2)}` }]
         };
       } catch (e) {
         return { content: [{ type: 'text', text: 'Error: ' + e.message }], isError: true };

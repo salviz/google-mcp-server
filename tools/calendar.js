@@ -8,7 +8,7 @@ export function registerCalendarTools(server) {
     'calendar_list_events',
     'List upcoming Google Calendar events',
     {
-      maxResults: z.number().optional().describe('Maximum number of events to return (default 10)'),
+      maxResults: z.coerce.number().optional().describe('Maximum number of events to return (default 10)'),
       timeMin: z.string().optional().describe('Start of time range in ISO 8601 format (defaults to now)'),
       timeMax: z.string().optional().describe('End of time range in ISO 8601 format'),
       calendarId: z.string().optional().describe('Calendar ID (default: primary)'),
@@ -73,14 +73,61 @@ export function registerCalendarTools(server) {
     }
   );
 
-  // 2. Create a new event
+  // 2. Search events by text query
+  server.tool(
+    'calendar_search_events',
+    'Search Google Calendar events by text query (searches summary, description, location, attendees)',
+    {
+      query: z.string().describe('Text to search for in events'),
+      maxResults: z.coerce.number().optional().describe('Maximum results (default 10)'),
+      timeMin: z.string().optional().describe('Start of time range in ISO 8601 (defaults to now)'),
+      timeMax: z.string().optional().describe('End of time range in ISO 8601'),
+      calendarId: z.string().optional().describe('Calendar ID (default: primary)'),
+    },
+    async ({ query, maxResults, timeMin, timeMax, calendarId }) => {
+      try {
+        const calendar = google.calendar({ version: 'v3', auth: getAuth() });
+        const params = {
+          calendarId: calendarId || 'primary',
+          q: query,
+          maxResults: maxResults || 10,
+          timeMin: timeMin || new Date().toISOString(),
+          singleEvents: true,
+          orderBy: 'startTime',
+        };
+        if (timeMax) params.timeMax = timeMax;
+
+        const res = await calendar.events.list(params);
+        const events = res.data.items || [];
+
+        if (events.length === 0) {
+          return { content: [{ type: 'text', text: `No events found matching "${query}".` }] };
+        }
+
+        const formatted = events.map((event, i) => {
+          const start = event.start.dateTime || event.start.date || 'N/A';
+          let line = `${i + 1}. ${event.summary || '(No title)'}`;
+          line += `\n   ID: ${event.id}`;
+          line += `\n   Start: ${start}`;
+          if (event.location) line += `\n   Location: ${event.location}`;
+          return line;
+        }).join('\n\n');
+
+        return { content: [{ type: 'text', text: `Found ${events.length} event(s) for "${query}":\n\n${formatted}` }] };
+      } catch (e) {
+        return { content: [{ type: 'text', text: 'Error: ' + e.message }], isError: true };
+      }
+    }
+  );
+
+  // 3. Create a new event
   server.tool(
     'calendar_create_event',
     'Create a new Google Calendar event',
     {
       summary: z.string().describe('Event title (required)'),
-      startTime: z.string().describe('Start time in ISO 8601 format, e.g. 2026-03-01T10:00:00-06:00 (required)'),
-      endTime: z.string().describe('End time in ISO 8601 format, e.g. 2026-03-01T11:00:00-06:00 (required)'),
+      startTime: z.string().describe('Start time in ISO 8601 (e.g. 2026-03-01T10:00:00-06:00) or date-only for all-day events (e.g. 2026-03-01)'),
+      endTime: z.string().describe('End time in ISO 8601 (e.g. 2026-03-01T11:00:00-06:00) or date-only for all-day events (e.g. 2026-03-02)'),
       description: z.string().optional().describe('Event description'),
       location: z.string().optional().describe('Event location'),
       calendarId: z.string().optional().describe('Calendar ID (default: primary)'),
@@ -89,10 +136,11 @@ export function registerCalendarTools(server) {
       try {
         const calendar = google.calendar({ version: 'v3', auth: getAuth() });
 
+        const isAllDay = /^\d{4}-\d{2}-\d{2}$/.test(startTime);
         const event = {
           summary,
-          start: { dateTime: startTime },
-          end: { dateTime: endTime },
+          start: isAllDay ? { date: startTime } : { dateTime: startTime },
+          end: isAllDay ? { date: endTime } : { dateTime: endTime },
         };
         if (description) event.description = description;
         if (location) event.location = location;
@@ -430,7 +478,7 @@ export function registerCalendarTools(server) {
     {
       eventId: z.string().describe('ID of the recurring event'),
       calendarId: z.string().optional().describe('Calendar ID (default: primary)'),
-      maxResults: z.number().optional().describe('Maximum number of instances to return (default 10)'),
+      maxResults: z.coerce.number().optional().describe('Maximum number of instances to return (default 10)'),
     },
     async ({ eventId, calendarId, maxResults }) => {
       try {
@@ -575,7 +623,39 @@ export function registerCalendarTools(server) {
     }
   );
 
-  // 12. Delete a calendar
+  // 12. Update a calendar
+  server.tool(
+    'calendar_update_calendar',
+    'Update a Google Calendar (name, description, time zone)',
+    {
+      calendarId: z.string().describe('ID of the calendar to update'),
+      summary: z.string().optional().describe('New calendar name'),
+      description: z.string().optional().describe('New description'),
+      timeZone: z.string().optional().describe('New time zone'),
+    },
+    async ({ calendarId, summary, description, timeZone }) => {
+      try {
+        const calendar = google.calendar({ version: 'v3', auth: getAuth() });
+        const patch = {};
+        if (summary !== undefined) patch.summary = summary;
+        if (description !== undefined) patch.description = description;
+        if (timeZone !== undefined) patch.timeZone = timeZone;
+
+        const res = await calendar.calendars.patch({
+          calendarId,
+          requestBody: patch,
+        });
+        const updated = res.data;
+        return {
+          content: [{ type: 'text', text: `Calendar updated.\n  ID: ${updated.id}\n  Summary: ${updated.summary}\n  Time Zone: ${updated.timeZone || 'N/A'}` }],
+        };
+      } catch (e) {
+        return { content: [{ type: 'text', text: 'Error: ' + e.message }], isError: true };
+      }
+    }
+  );
+
+  // 13. Delete a calendar
   server.tool(
     'calendar_delete_calendar',
     'Delete a Google Calendar (cannot delete primary)',
