@@ -7,11 +7,12 @@ import { registerCalendarTools } from './tools/calendar.js';
 import { registerExtraTools } from './tools/extras.js';
 import { registerDocsTools } from './tools/docs.js';
 import { registerSlidesTools } from './tools/slides.js';
+import { registerGmailTools } from './tools/gmail.js';
 
 const server = new McpServer({
   name: 'google-mcp-server',
-  version: '2.0.0',
-  description: 'Custom Google MCP server - Drive (with upload/download), Calendar, Contacts, Tasks, Sheets, Docs, Slides',
+  version: '2.1.0',
+  description: 'Custom Google MCP server - Drive, Calendar, Contacts, Tasks, Sheets, Docs, Slides, Gmail',
 });
 
 registerDriveTools(server);
@@ -19,6 +20,7 @@ registerCalendarTools(server);
 registerExtraTools(server);
 registerDocsTools(server);
 registerSlidesTools(server);
+registerGmailTools(server);
 
 const transport = new StdioServerTransport();
 await server.connect(transport);

@@ -840,4 +840,909 @@ export function registerDriveTools(server) {
       }
     }
   );
+
+  // 24. drive_get_changes_start_token - Get starting pageToken for listing future changes
+  server.tool(
+    'drive_get_changes_start_token',
+    'Get the starting pageToken for listing future changes in Google Drive',
+    {},
+    async () => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const res = await drive.changes.getStartPageToken();
+        return success(`Start page token: ${res.data.startPageToken}`);
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 25. drive_list_changes - List changes to files
+  server.tool(
+    'drive_list_changes',
+    'List changes to files in Google Drive since a given page token',
+    {
+      pageToken: z.string().describe('The token for continuing a previous list request from getStartPageToken or a previous list response'),
+      pageSize: z.coerce.number().optional().describe('Maximum number of changes to return (default: 100)'),
+      spaces: z.string().optional().describe("Comma-separated list of spaces to query (e.g. 'drive', 'appDataFolder')"),
+      includeRemoved: z.boolean().optional().describe('Whether to include changes indicating items removed from the list (default: true)'),
+      restrictToMyDrive: z.boolean().optional().describe('Whether to restrict results to changes within My Drive (default: false)'),
+    },
+    async ({ pageToken, pageSize, spaces, includeRemoved, restrictToMyDrive }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const params = {
+          pageToken,
+          pageSize: pageSize || 100,
+          fields: 'nextPageToken,newStartPageToken,changes(changeType,time,removed,fileId,file(id,name,mimeType,trashed))',
+        };
+        if (spaces) params.spaces = spaces;
+        if (includeRemoved !== undefined) params.includeRemoved = includeRemoved;
+        if (restrictToMyDrive !== undefined) params.restrictToMyDrive = restrictToMyDrive;
+
+        const res = await drive.changes.list(params);
+        const changes = res.data.changes || [];
+        const lines = [`Found ${changes.length} change(s):\n`];
+        for (const c of changes) {
+          const file = c.file;
+          if (c.removed) {
+            lines.push(`- [REMOVED] File ID: ${c.fileId} at ${c.time}`);
+          } else if (file) {
+            lines.push(`- [${c.changeType || 'file'}] ${file.name} (${file.id}) at ${c.time}${file.trashed ? ' [trashed]' : ''}`);
+          } else {
+            lines.push(`- [${c.changeType || 'unknown'}] File ID: ${c.fileId} at ${c.time}`);
+          }
+        }
+        if (res.data.newStartPageToken) {
+          lines.push(`\nNew start page token: ${res.data.newStartPageToken}`);
+        }
+        if (res.data.nextPageToken) {
+          lines.push(`\nNext page token: ${res.data.nextPageToken}`);
+        }
+        return success(lines.join('\n'));
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 26. drive_watch_changes - Subscribe to changes
+  server.tool(
+    'drive_watch_changes',
+    'Subscribe to changes in Google Drive via push notifications',
+    {
+      pageToken: z.string().describe('The token for starting the watch from getStartPageToken'),
+      channelId: z.string().describe('A unique string ID for the channel'),
+      channelType: z.string().optional().describe("The type of delivery mechanism (default: 'web_hook')"),
+      channelAddress: z.string().describe('The URL that receives notifications'),
+      channelExpiration: z.string().optional().describe('Channel expiration time as Unix timestamp in milliseconds'),
+    },
+    async ({ pageToken, channelId, channelType, channelAddress, channelExpiration }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const requestBody = {
+          id: channelId,
+          type: channelType || 'web_hook',
+          address: channelAddress,
+        };
+        if (channelExpiration) requestBody.expiration = channelExpiration;
+
+        const res = await drive.changes.watch({
+          pageToken,
+          requestBody,
+        });
+
+        return success(JSON.stringify(res.data, null, 2));
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 27. drive_stop_channel - Stop watching resources
+  server.tool(
+    'drive_stop_channel',
+    'Stop receiving push notifications for a channel',
+    {
+      channelId: z.string().describe('The ID of the channel to stop'),
+      resourceId: z.string().describe('The opaque resource ID of the watched resource'),
+    },
+    async ({ channelId, resourceId }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        await drive.channels.stop({
+          requestBody: {
+            id: channelId,
+            resourceId,
+          },
+        });
+        return success(`Channel ${channelId} stopped successfully.`);
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 28. drive_get_comment - Get a comment by ID
+  server.tool(
+    'drive_get_comment',
+    'Get a specific comment on a Google Drive file by ID',
+    {
+      fileId: z.string().describe('The ID of the file'),
+      commentId: z.string().describe('The ID of the comment'),
+    },
+    async ({ fileId, commentId }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const res = await drive.comments.get({
+          fileId,
+          commentId,
+          fields: 'id,content,author(displayName,emailAddress),createdTime,modifiedTime,resolved,quotedFileContent',
+        });
+
+        const c = res.data;
+        const lines = [
+          `Comment ID: ${c.id}`,
+          `Author: ${c.author?.displayName || 'Unknown'} <${c.author?.emailAddress || ''}>`,
+          `Content: ${c.content}`,
+          `Created: ${c.createdTime}`,
+          `Modified: ${c.modifiedTime}`,
+          `Resolved: ${c.resolved || false}`,
+        ];
+        if (c.quotedFileContent) {
+          lines.push(`Quoted content: ${c.quotedFileContent.value}`);
+        }
+        return success(lines.join('\n'));
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 29. drive_update_comment - Update a comment's content
+  server.tool(
+    'drive_update_comment',
+    'Update the content of a comment on a Google Drive file',
+    {
+      fileId: z.string().describe('The ID of the file'),
+      commentId: z.string().describe('The ID of the comment to update'),
+      content: z.string().describe('New comment text'),
+    },
+    async ({ fileId, commentId, content }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const res = await drive.comments.update({
+          fileId,
+          commentId,
+          requestBody: { content },
+          fields: 'id,content,modifiedTime',
+        });
+
+        const c = res.data;
+        return success(`Comment updated.\nID: ${c.id}\nContent: ${c.content}\nModified: ${c.modifiedTime}`);
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 30. drive_delete_comment - Delete a comment
+  server.tool(
+    'drive_delete_comment',
+    'Delete a comment from a Google Drive file',
+    {
+      fileId: z.string().describe('The ID of the file'),
+      commentId: z.string().describe('The ID of the comment to delete'),
+    },
+    async ({ fileId, commentId }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        await drive.comments.delete({ fileId, commentId });
+        return success(`Comment ${commentId} deleted from file ${fileId}.`);
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 31. drive_list_replies - List replies to a comment
+  server.tool(
+    'drive_list_replies',
+    'List replies to a comment on a Google Drive file',
+    {
+      fileId: z.string().describe('The ID of the file'),
+      commentId: z.string().describe('The ID of the comment'),
+      pageSize: z.coerce.number().optional().describe('Maximum replies to return (default: 20)'),
+    },
+    async ({ fileId, commentId, pageSize }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const res = await drive.replies.list({
+          fileId,
+          commentId,
+          pageSize: pageSize || 20,
+          fields: 'replies(id,content,author(displayName,emailAddress),createdTime,modifiedTime)',
+        });
+
+        const replies = res.data.replies || [];
+        if (replies.length === 0) {
+          return success('No replies found for this comment.');
+        }
+
+        const lines = [`Found ${replies.length} reply/replies:\n`];
+        for (const r of replies) {
+          lines.push(`- [${r.id}] ${r.author?.displayName || 'Unknown'}: ${r.content}`);
+          lines.push(`  Created: ${r.createdTime}`);
+        }
+        return success(lines.join('\n'));
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 32. drive_get_reply - Get a reply by ID
+  server.tool(
+    'drive_get_reply',
+    'Get a specific reply to a comment on a Google Drive file',
+    {
+      fileId: z.string().describe('The ID of the file'),
+      commentId: z.string().describe('The ID of the comment'),
+      replyId: z.string().describe('The ID of the reply'),
+    },
+    async ({ fileId, commentId, replyId }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const res = await drive.replies.get({
+          fileId,
+          commentId,
+          replyId,
+          fields: 'id,content,author(displayName,emailAddress),createdTime,modifiedTime',
+        });
+
+        const r = res.data;
+        const lines = [
+          `Reply ID: ${r.id}`,
+          `Author: ${r.author?.displayName || 'Unknown'} <${r.author?.emailAddress || ''}>`,
+          `Content: ${r.content}`,
+          `Created: ${r.createdTime}`,
+          `Modified: ${r.modifiedTime}`,
+        ];
+        return success(lines.join('\n'));
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 33. drive_create_reply - Create a reply to a comment
+  server.tool(
+    'drive_create_reply',
+    'Create a reply to a comment on a Google Drive file',
+    {
+      fileId: z.string().describe('The ID of the file'),
+      commentId: z.string().describe('The ID of the comment to reply to'),
+      content: z.string().describe('Reply text'),
+    },
+    async ({ fileId, commentId, content }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const res = await drive.replies.create({
+          fileId,
+          commentId,
+          requestBody: { content },
+          fields: 'id,content,author(displayName),createdTime',
+        });
+
+        const r = res.data;
+        return success(
+          `Reply added.\nID: ${r.id}\nBy: ${r.author?.displayName || 'You'}\nContent: ${r.content}\nCreated: ${r.createdTime}`
+        );
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 34. drive_update_reply - Update a reply
+  server.tool(
+    'drive_update_reply',
+    'Update a reply to a comment on a Google Drive file',
+    {
+      fileId: z.string().describe('The ID of the file'),
+      commentId: z.string().describe('The ID of the comment'),
+      replyId: z.string().describe('The ID of the reply to update'),
+      content: z.string().describe('New reply text'),
+    },
+    async ({ fileId, commentId, replyId, content }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const res = await drive.replies.update({
+          fileId,
+          commentId,
+          replyId,
+          requestBody: { content },
+          fields: 'id,content,modifiedTime',
+        });
+
+        const r = res.data;
+        return success(`Reply updated.\nID: ${r.id}\nContent: ${r.content}\nModified: ${r.modifiedTime}`);
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 35. drive_delete_reply - Delete a reply
+  server.tool(
+    'drive_delete_reply',
+    'Delete a reply to a comment on a Google Drive file',
+    {
+      fileId: z.string().describe('The ID of the file'),
+      commentId: z.string().describe('The ID of the comment'),
+      replyId: z.string().describe('The ID of the reply to delete'),
+    },
+    async ({ fileId, commentId, replyId }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        await drive.replies.delete({ fileId, commentId, replyId });
+        return success(`Reply ${replyId} deleted from comment ${commentId}.`);
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 36. drive_create_shared_drive - Create a shared drive
+  server.tool(
+    'drive_create_shared_drive',
+    'Create a new shared drive in Google Drive',
+    {
+      name: z.string().describe('Name of the shared drive to create'),
+      requestId: z.string().describe('An ID (such as a random UUID) used to identify this request as idempotent'),
+    },
+    async ({ name, requestId }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const res = await drive.drives.create({
+          requestId,
+          requestBody: { name },
+          fields: 'id,name,createdTime',
+        });
+
+        const d = res.data;
+        return success(`Shared drive created.\nName: ${d.name}\nID: ${d.id}\nCreated: ${d.createdTime}`);
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 37. drive_get_shared_drive - Get shared drive metadata
+  server.tool(
+    'drive_get_shared_drive',
+    'Get metadata of a shared drive in Google Drive',
+    {
+      driveId: z.string().describe('The ID of the shared drive'),
+    },
+    async ({ driveId }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const res = await drive.drives.get({
+          driveId,
+          fields: 'id,name,createdTime,hidden,restrictions,capabilities',
+        });
+
+        return success(JSON.stringify(res.data, null, 2));
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 38. drive_list_shared_drives - List shared drives
+  server.tool(
+    'drive_list_shared_drives',
+    'List shared drives the user has access to',
+    {
+      pageSize: z.coerce.number().optional().describe('Maximum shared drives to return (default: 10)'),
+      pageToken: z.string().optional().describe('Page token for continuing a previous list request'),
+    },
+    async ({ pageSize, pageToken }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const params = {
+          pageSize: pageSize || 10,
+          fields: 'nextPageToken,drives(id,name,createdTime,hidden)',
+        };
+        if (pageToken) params.pageToken = pageToken;
+
+        const res = await drive.drives.list(params);
+        const drives = res.data.drives || [];
+        if (drives.length === 0) {
+          return success('No shared drives found.');
+        }
+
+        const lines = [`Found ${drives.length} shared drive(s):\n`];
+        for (const d of drives) {
+          lines.push(`- ${d.name} (ID: ${d.id})${d.hidden ? ' [hidden]' : ''}`);
+          if (d.createdTime) lines.push(`  Created: ${d.createdTime}`);
+        }
+        if (res.data.nextPageToken) {
+          lines.push(`\nNext page token: ${res.data.nextPageToken}`);
+        }
+        return success(lines.join('\n'));
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 39. drive_update_shared_drive - Update shared drive metadata
+  server.tool(
+    'drive_update_shared_drive',
+    'Update metadata of a shared drive (name, restrictions, etc.)',
+    {
+      driveId: z.string().describe('The ID of the shared drive to update'),
+      name: z.string().optional().describe('New name for the shared drive'),
+      restrictions: z.string().optional().describe('JSON string of restrictions to update (e.g. {"adminManagedRestrictions":true})'),
+    },
+    async ({ driveId, name, restrictions }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const requestBody = {};
+        if (name) requestBody.name = name;
+        if (restrictions) {
+          Object.assign(requestBody, { restrictions: JSON.parse(restrictions) });
+        }
+
+        const res = await drive.drives.update({
+          driveId,
+          requestBody,
+          fields: 'id,name,restrictions',
+        });
+
+        return success(JSON.stringify(res.data, null, 2));
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 40. drive_delete_shared_drive - Delete a shared drive
+  server.tool(
+    'drive_delete_shared_drive',
+    'Delete a shared drive (must be empty)',
+    {
+      driveId: z.string().describe('The ID of the shared drive to delete'),
+    },
+    async ({ driveId }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        await drive.drives.delete({ driveId });
+        return success(`Shared drive ${driveId} deleted successfully.`);
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 41. drive_hide_shared_drive - Hide shared drive from default view
+  server.tool(
+    'drive_hide_shared_drive',
+    'Hide a shared drive from the default view',
+    {
+      driveId: z.string().describe('The ID of the shared drive to hide'),
+    },
+    async ({ driveId }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const res = await drive.drives.hide({ driveId });
+        return success(`Shared drive '${res.data.name || driveId}' is now hidden.`);
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 42. drive_unhide_shared_drive - Restore shared drive to default view
+  server.tool(
+    'drive_unhide_shared_drive',
+    'Restore a shared drive to the default view',
+    {
+      driveId: z.string().describe('The ID of the shared drive to unhide'),
+    },
+    async ({ driveId }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const res = await drive.drives.unhide({ driveId });
+        return success(`Shared drive '${res.data.name || driveId}' is now visible.`);
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 43. drive_get_permission - Get a permission by ID
+  server.tool(
+    'drive_get_permission',
+    'Get a specific permission on a Google Drive file by permission ID',
+    {
+      fileId: z.string().describe('The ID of the file'),
+      permissionId: z.string().describe('The ID of the permission'),
+    },
+    async ({ fileId, permissionId }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const res = await drive.permissions.get({
+          fileId,
+          permissionId,
+          fields: 'id,role,type,emailAddress,displayName,domain,expirationTime,pendingOwner',
+        });
+
+        const p = res.data;
+        const lines = [
+          `Permission ID: ${p.id}`,
+          `Role: ${p.role}`,
+          `Type: ${p.type}`,
+        ];
+        if (p.emailAddress) lines.push(`Email: ${p.emailAddress}`);
+        if (p.displayName) lines.push(`Name: ${p.displayName}`);
+        if (p.domain) lines.push(`Domain: ${p.domain}`);
+        if (p.expirationTime) lines.push(`Expires: ${p.expirationTime}`);
+        if (p.pendingOwner) lines.push(`Pending owner: ${p.pendingOwner}`);
+        return success(lines.join('\n'));
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 44. drive_update_permission - Update a permission's role
+  server.tool(
+    'drive_update_permission',
+    'Update a permission on a Google Drive file (change role)',
+    {
+      fileId: z.string().describe('The ID of the file'),
+      permissionId: z.string().describe('The ID of the permission to update'),
+      role: z.string().describe('New role: owner, organizer, fileOrganizer, writer, commenter, reader'),
+    },
+    async ({ fileId, permissionId, role }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const res = await drive.permissions.update({
+          fileId,
+          permissionId,
+          requestBody: { role },
+          fields: 'id,role,type,emailAddress',
+        });
+
+        const p = res.data;
+        return success(
+          `Permission updated.\nID: ${p.id}\nRole: ${p.role}\nType: ${p.type}` +
+            (p.emailAddress ? `\nEmail: ${p.emailAddress}` : '')
+        );
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 45. drive_get_revision - Get a specific revision
+  server.tool(
+    'drive_get_revision',
+    'Get metadata of a specific revision of a Google Drive file',
+    {
+      fileId: z.string().describe('The ID of the file'),
+      revisionId: z.string().describe('The ID of the revision'),
+    },
+    async ({ fileId, revisionId }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const res = await drive.revisions.get({
+          fileId,
+          revisionId,
+          fields: 'id,mimeType,modifiedTime,keepForever,published,publishAuto,publishedOutsideDomain,lastModifyingUser(displayName,emailAddress),size,originalFilename',
+        });
+
+        return success(JSON.stringify(res.data, null, 2));
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 46. drive_update_revision - Update revision metadata
+  server.tool(
+    'drive_update_revision',
+    'Update metadata of a revision (published, publishAuto, publishedOutsideDomain, keepForever)',
+    {
+      fileId: z.string().describe('The ID of the file'),
+      revisionId: z.string().describe('The ID of the revision to update'),
+      published: z.boolean().optional().describe('Whether this revision is published'),
+      publishAuto: z.boolean().optional().describe('Whether subsequent revisions will be automatically republished'),
+      publishedOutsideDomain: z.boolean().optional().describe('Whether this revision is published outside the domain'),
+      keepForever: z.boolean().optional().describe('Whether to keep this revision forever, even if it is no longer the head revision'),
+    },
+    async ({ fileId, revisionId, published, publishAuto, publishedOutsideDomain, keepForever }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const requestBody = {};
+        if (published !== undefined) requestBody.published = published;
+        if (publishAuto !== undefined) requestBody.publishAuto = publishAuto;
+        if (publishedOutsideDomain !== undefined) requestBody.publishedOutsideDomain = publishedOutsideDomain;
+        if (keepForever !== undefined) requestBody.keepForever = keepForever;
+
+        const res = await drive.revisions.update({
+          fileId,
+          revisionId,
+          requestBody,
+          fields: 'id,modifiedTime,keepForever,published,publishAuto,publishedOutsideDomain',
+        });
+
+        return success(JSON.stringify(res.data, null, 2));
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 47. drive_delete_revision - Delete a revision
+  server.tool(
+    'drive_delete_revision',
+    'Delete a revision of a Google Drive file (cannot delete the last remaining revision)',
+    {
+      fileId: z.string().describe('The ID of the file'),
+      revisionId: z.string().describe('The ID of the revision to delete'),
+    },
+    async ({ fileId, revisionId }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        await drive.revisions.delete({ fileId, revisionId });
+        return success(`Revision ${revisionId} deleted from file ${fileId}.`);
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 48. drive_generate_ids - Generate file IDs for use in create/copy
+  server.tool(
+    'drive_generate_ids',
+    'Generate a set of file IDs that can be used in create or copy requests',
+    {
+      count: z.coerce.number().optional().describe('Number of IDs to generate (default: 10, max: 1000)'),
+      space: z.string().optional().describe("The space in which the IDs can be used: 'drive' or 'appDataFolder' (default: 'drive')"),
+      type: z.string().optional().describe("The type of items for which the IDs can be used: 'files' or 'shortcuts' (default: 'files')"),
+    },
+    async ({ count, space, type }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const params = {
+          count: count || 10,
+        };
+        if (space) params.space = space;
+        if (type) params.type = type;
+
+        const res = await drive.files.generateIds(params);
+        const ids = res.data.ids || [];
+        return success(`Generated ${ids.length} file ID(s):\n${ids.join('\n')}`);
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 49. drive_list_labels - List labels on a file
+  server.tool(
+    'drive_list_labels',
+    'List labels applied to a Google Drive file',
+    {
+      fileId: z.string().describe('The ID of the file'),
+      maxResults: z.coerce.number().optional().describe('Maximum labels to return (default: 20)'),
+      pageToken: z.string().optional().describe('Page token for continuing a previous list request'),
+    },
+    async ({ fileId, maxResults, pageToken }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const params = {
+          fileId,
+          maxResults: maxResults || 20,
+        };
+        if (pageToken) params.pageToken = pageToken;
+
+        const res = await drive.files.listLabels(params);
+        const labels = res.data.labels || [];
+        if (labels.length === 0) {
+          return success('No labels found on this file.');
+        }
+
+        return success(JSON.stringify(res.data, null, 2));
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 50. drive_modify_labels - Modify labels on a file
+  server.tool(
+    'drive_modify_labels',
+    'Modify (add, update, remove) labels on a Google Drive file',
+    {
+      fileId: z.string().describe('The ID of the file'),
+      requests: z.string().describe('JSON string of label modification requests array (see Drive API modifyLabels documentation)'),
+    },
+    async ({ fileId, requests }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const labelModifications = JSON.parse(requests);
+
+        const res = await drive.files.modifyLabels({
+          fileId,
+          requestBody: {
+            labelModifications,
+          },
+        });
+
+        return success(JSON.stringify(res.data, null, 2));
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 51. drive_watch_file - Subscribe to changes on a file
+  server.tool(
+    'drive_watch_file',
+    'Subscribe to push notifications for changes to a specific Google Drive file',
+    {
+      fileId: z.string().describe('The ID of the file to watch'),
+      channelId: z.string().describe('A unique string ID for the channel'),
+      channelType: z.string().optional().describe("The type of delivery mechanism (default: 'web_hook')"),
+      channelAddress: z.string().describe('The URL that receives notifications'),
+      channelExpiration: z.string().optional().describe('Channel expiration time as Unix timestamp in milliseconds'),
+    },
+    async ({ fileId, channelId, channelType, channelAddress, channelExpiration }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const requestBody = {
+          id: channelId,
+          type: channelType || 'web_hook',
+          address: channelAddress,
+        };
+        if (channelExpiration) requestBody.expiration = channelExpiration;
+
+        const res = await drive.files.watch({
+          fileId,
+          requestBody,
+        });
+
+        return success(JSON.stringify(res.data, null, 2));
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // ── Access Proposals ──────────────────────────────────────────────
+
+  server.tool(
+    'drive_list_access_proposals',
+    'List access proposals on a file (requests for access)',
+    {
+      fileId: z.string().describe('The file ID'),
+      pageToken: z.string().optional().describe('Page token for pagination'),
+      pageSize: z.coerce.number().optional().describe('Max results (default 10)'),
+    },
+    async ({ fileId, pageToken, pageSize }) => {
+      try {
+        const auth = getAuth();
+        const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/accessproposals`;
+        const params = { pageSize: pageSize || 10 };
+        if (pageToken) params.pageToken = pageToken;
+        const res = await auth.request({ url, method: 'GET', params });
+        return success(JSON.stringify(res.data, null, 2));
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  server.tool(
+    'drive_get_access_proposal',
+    'Get a specific access proposal by ID',
+    {
+      fileId: z.string().describe('The file ID'),
+      proposalId: z.string().describe('The access proposal ID'),
+    },
+    async ({ fileId, proposalId }) => {
+      try {
+        const auth = getAuth();
+        const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/accessproposals/${encodeURIComponent(proposalId)}`;
+        const res = await auth.request({ url, method: 'GET' });
+        return success(JSON.stringify(res.data, null, 2));
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  server.tool(
+    'drive_resolve_access_proposal',
+    'Approve or deny an access proposal on a file',
+    {
+      fileId: z.string().describe('The file ID'),
+      proposalId: z.string().describe('The access proposal ID'),
+      action: z.enum(['ACCEPT', 'DENY']).describe('Whether to accept or deny the proposal'),
+      role: z.string().optional().describe('Permission role if accepting (reader, writer, commenter)'),
+      sendNotification: z.boolean().optional().describe('Send notification email (default true)'),
+    },
+    async ({ fileId, proposalId, action, role, sendNotification }) => {
+      try {
+        const auth = getAuth();
+        const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/accessproposals/${encodeURIComponent(proposalId)}:resolve`;
+        const data = { action };
+        if (role) data.role = role;
+        if (sendNotification !== undefined) data.sendNotification = sendNotification;
+        await auth.request({ url, method: 'POST', data });
+        return success(JSON.stringify({ success: true, action, proposalId }, null, 2));
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // ── Apps ──────────────────────────────────────────────────────────
+
+  server.tool(
+    'drive_list_apps',
+    'List the user\'s installed Google Drive apps',
+    {},
+    async () => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const res = await drive.apps.list();
+        return success(JSON.stringify(res.data, null, 2));
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  server.tool(
+    'drive_get_app',
+    'Get a specific installed Drive app by ID',
+    {
+      appId: z.string().describe('The app ID'),
+    },
+    async ({ appId }) => {
+      try {
+        const drive = google.drive({ version: 'v3', auth: getAuth() });
+        const res = await drive.apps.get({ appId });
+        return success(JSON.stringify(res.data, null, 2));
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // ── Operations ────────────────────────────────────────────────────
+
+  server.tool(
+    'drive_get_operation',
+    'Get the status of a long-running operation',
+    {
+      operationName: z.string().describe('The operation name (from a long-running operation response)'),
+    },
+    async ({ operationName }) => {
+      try {
+        const auth = getAuth();
+        const url = `https://www.googleapis.com/drive/v3/operations/${encodeURIComponent(operationName)}`;
+        const res = await auth.request({ url, method: 'GET' });
+        return success(JSON.stringify(res.data, null, 2));
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
 }

@@ -238,4 +238,54 @@ export function registerSlidesTools(server) {
       }
     }
   );
+
+  // 7. slides_get_page - Get details of a specific page/slide
+  server.tool(
+    'slides_get_page',
+    'Get details of a specific page/slide in a Google Slides presentation',
+    {
+      presentationId: z.string().describe('The presentation ID'),
+      pageObjectId: z.string().describe('The object ID of the page/slide to retrieve'),
+    },
+    async ({ presentationId, pageObjectId }) => {
+      try {
+        const slides = google.slides({ version: 'v1', auth: getAuth() });
+        const res = await slides.presentations.pages.get({
+          presentationId,
+          pageObjectId,
+        });
+        return success(JSON.stringify(res.data, null, 2));
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
+
+  // 8. slides_get_thumbnail - Generate a thumbnail image URL for a slide
+  server.tool(
+    'slides_get_thumbnail',
+    'Generate a thumbnail image URL for a specific slide in a Google Slides presentation',
+    {
+      presentationId: z.string().describe('The presentation ID'),
+      pageObjectId: z.string().describe('The object ID of the page/slide'),
+      thumbnailSize: z.enum(['LARGE', 'MEDIUM', 'SMALL']).optional().describe('Thumbnail size (default: MEDIUM)'),
+    },
+    async ({ presentationId, pageObjectId, thumbnailSize }) => {
+      try {
+        const slides = google.slides({ version: 'v1', auth: getAuth() });
+        const res = await slides.presentations.pages.getThumbnail({
+          presentationId,
+          pageObjectId,
+          'thumbnailProperties.thumbnailSize': thumbnailSize || 'MEDIUM',
+          'thumbnailProperties.mimeType': 'PNG',
+        });
+        const thumb = res.data;
+        return success(
+          `Thumbnail generated.\nURL: ${thumb.contentUrl}\nWidth: ${thumb.width}\nHeight: ${thumb.height}`
+        );
+      } catch (e) {
+        return error(e);
+      }
+    }
+  );
 }
